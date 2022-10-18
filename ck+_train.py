@@ -22,7 +22,7 @@ def parse():
     parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--lrf', type=float, default=0.1)
-    parser.add_argument('--data-path', type=str, default="CK+")
+    parser.add_argument('--data-path', type=str, default="../data/CK+")
     parser.add_argument('--input_channel', type=int, default=1)
     parser.add_argument('--weights', type=str, default='',
                         help='initial weights path')

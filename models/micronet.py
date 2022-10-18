@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,13 +6,14 @@ from torch.cuda.amp import autocast
 import models.activation as activation
 import models.microconfig as microcfg
 
-
 import math
 import pdb
 
 __all__ = ['MicroNet', 'micronet']
 
 TAU = 20
+
+
 #####################################################################3
 # part 1: functions
 #####################################################################3
@@ -37,6 +37,7 @@ def _make_divisible(v, divisor, min_value=None):
         new_v += divisor
     return new_v
 
+
 class h_sigmoid(nn.Module):
     def __init__(self, inplace=True):
         super(h_sigmoid, self).__init__()
@@ -54,12 +55,14 @@ class h_swish(nn.Module):
     def forward(self, x):
         return x * self.sigmoid(x)
 
+
 def conv_3x3_bn(inp, oup, stride, dilation=1):
     return nn.Sequential(
         nn.Conv2d(inp, oup, 3, stride, 1, bias=False, dilation=dilation),
         nn.BatchNorm2d(oup),
         nn.ReLU6(inplace=True)
     )
+
 
 def conv_1x1_bn(inp, oup):
     return nn.Sequential(
@@ -68,11 +71,13 @@ def conv_1x1_bn(inp, oup):
         nn.ReLU6(inplace=True)
     )
 
+
 def gcd(a, b):
     a, b = (a, b) if a >= b else (b, a)
     while b:
-        a, b = b, a%b
+        a, b = b, a % b
     return a
+
 
 #####################################################################3
 # part 2: modules
@@ -94,6 +99,7 @@ class MaxGroupPooling(nn.Module):
         out, _ = torch.max(y, dim=2)
         return out
 
+
 class SwishLinear(nn.Module):
     def __init__(self, inp, oup):
         super(SwishLinear, self).__init__()
@@ -106,29 +112,31 @@ class SwishLinear(nn.Module):
     def forward(self, x):
         return self.linear(x)
 
+
 class StemLayer(nn.Module):
-    def __init__(self, inp, oup, stride, dilation=1, mode='default', groups=(4,4)):
+    def __init__(self, inp, oup, stride, dilation=1, mode='default', groups=(4, 4)):
         super(StemLayer, self).__init__()
 
         self.exp = 1 if mode == 'default' else 2
-        g1, g2 = groups 
+        g1, g2 = groups
         if mode == 'default':
             self.stem = nn.Sequential(
-                nn.Conv2d(inp, oup*self.exp, 3, stride, 1, bias=False, dilation=dilation),
-                nn.BatchNorm2d(oup*self.exp),
+                nn.Conv2d(inp, oup * self.exp, 3, stride, 1, bias=False, dilation=dilation),
+                nn.BatchNorm2d(oup * self.exp),
                 nn.ReLU6(inplace=True) if self.exp == 1 else MaxGroupPooling(self.exp)
             )
         elif mode == 'spatialsepsf':
             self.stem = nn.Sequential(
                 SpatialSepConvSF(inp, groups, 3, stride),
-                MaxGroupPooling(2) if g1*g2==2*oup else nn.ReLU6(inplace=True)
+                MaxGroupPooling(2) if g1 * g2 == 2 * oup else nn.ReLU6(inplace=True)
             )
-        else: 
+        else:
             raise ValueError('Undefined stem layer')
-           
+
     def forward(self, x):
-        out = self.stem(x)    
+        out = self.stem(x)
         return out
+
 
 class GroupConv(nn.Module):
     def __init__(self, inp, oup, groups=2):
@@ -136,7 +144,7 @@ class GroupConv(nn.Module):
         self.inp = inp
         self.oup = oup
         self.groups = groups
-        print ('inp: %d, oup:%d, g:%d' %(inp, oup, self.groups[0]))
+        print('inp: %d, oup:%d, g:%d' % (inp, oup, self.groups[0]))
         self.conv = nn.Sequential(
             nn.Conv2d(inp, oup, 1, 1, 0, bias=False, groups=self.groups[0]),
             nn.BatchNorm2d(oup)
@@ -145,6 +153,7 @@ class GroupConv(nn.Module):
     def forward(self, x):
         x = self.conv(x)
         return x
+
 
 class ChannelShuffle(nn.Module):
     def __init__(self, groups):
@@ -164,6 +173,7 @@ class ChannelShuffle(nn.Module):
 
         return out
 
+
 class ChannelShuffle2(nn.Module):
     def __init__(self, groups):
         super(ChannelShuffle2, self).__init__()
@@ -182,6 +192,7 @@ class ChannelShuffle2(nn.Module):
 
         return out
 
+
 ######################################################################3
 # part 3: new block
 #####################################################################3
@@ -193,19 +204,19 @@ class SpatialSepConvSF(nn.Module):
         oup1, oup2 = oups
         self.conv = nn.Sequential(
             nn.Conv2d(inp, oup1,
-                (kernel_size, 1),
-                (stride, 1),
-                (kernel_size//2, 0),
-                bias=False, groups=1
-            ),
+                      (kernel_size, 1),
+                      (stride, 1),
+                      (kernel_size // 2, 0),
+                      bias=False, groups=1
+                      ),
             nn.BatchNorm2d(oup1),
-            nn.Conv2d(oup1, oup1*oup2,
-                (1, kernel_size),
-                (1, stride),
-                (0, kernel_size//2),
-                bias=False, groups=oup1
-            ),
-            nn.BatchNorm2d(oup1*oup2),
+            nn.Conv2d(oup1, oup1 * oup2,
+                      (1, kernel_size),
+                      (1, stride),
+                      (0, kernel_size // 2),
+                      bias=False, groups=oup1
+                      ),
+            nn.BatchNorm2d(oup1 * oup2),
             ChannelShuffle(oup1),
         )
 
@@ -213,17 +224,19 @@ class SpatialSepConvSF(nn.Module):
         out = self.conv(x)
         return out
 
+
 class DepthConv(nn.Module):
     def __init__(self, inp, oup, kernel_size, stride):
         super(DepthConv, self).__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(inp, oup, kernel_size, stride, kernel_size//2, bias=False, groups=inp),
+            nn.Conv2d(inp, oup, kernel_size, stride, kernel_size // 2, bias=False, groups=inp),
             nn.BatchNorm2d(oup)
         )
 
     def forward(self, x):
         out = self.conv(x)
         return out
+
 
 class DepthSpatialSepConv(nn.Module):
     def __init__(self, inp, expand, kernel_size, stride):
@@ -231,23 +244,23 @@ class DepthSpatialSepConv(nn.Module):
 
         exp1, exp2 = expand
 
-        hidden_dim = inp*exp1
-        oup = inp*exp1*exp2
-        
+        hidden_dim = inp * exp1
+        oup = inp * exp1 * exp2
+
         self.conv = nn.Sequential(
-            nn.Conv2d(inp, inp*exp1, 
-                (kernel_size, 1), 
-                (stride, 1), 
-                (kernel_size//2, 0), 
-                bias=False, groups=inp
-            ),
-            nn.BatchNorm2d(inp*exp1),
+            nn.Conv2d(inp, inp * exp1,
+                      (kernel_size, 1),
+                      (stride, 1),
+                      (kernel_size // 2, 0),
+                      bias=False, groups=inp
+                      ),
+            nn.BatchNorm2d(inp * exp1),
             nn.Conv2d(hidden_dim, oup,
-                (1, kernel_size),
-                (1, stride),
-                (0, kernel_size//2),
-                bias=False, groups=hidden_dim
-            ),
+                      (1, kernel_size),
+                      (1, stride),
+                      (0, kernel_size // 2),
+                      bias=False, groups=hidden_dim
+                      ),
             nn.BatchNorm2d(oup)
         )
 
@@ -255,20 +268,22 @@ class DepthSpatialSepConv(nn.Module):
         out = self.conv(x)
         return out
 
-def get_pointwise_conv(mode, inp, oup, hiddendim, groups):
 
+def get_pointwise_conv(mode, inp, oup, hiddendim, groups):
     if mode == 'group':
         return GroupConv(inp, oup, groups)
     elif mode == '1x1':
         return nn.Sequential(
-                    nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
-                    nn.BatchNorm2d(oup)
-                )
+            nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
+            nn.BatchNorm2d(oup)
+        )
     else:
         return None
- 
+
+
 class DYMicroBlock(nn.Module):
-    def __init__(self, inp, oup, kernel_size=3, stride=1, ch_exp=(2, 2), ch_per_group=4, groups_1x1=(1, 1), depthsep=True, shuffle=False, pointwise='fft', activation_cfg=None):
+    def __init__(self, inp, oup, kernel_size=3, stride=1, ch_exp=(2, 2), ch_per_group=4, groups_1x1=(1, 1),
+                 depthsep=True, shuffle=False, pointwise='fft', activation_cfg=None):
         super(DYMicroBlock, self).__init__()
 
         print(activation_cfg.dy)
@@ -304,11 +319,11 @@ class DYMicroBlock(nn.Module):
                     init_a=init_a,
                     reduction=act_reduction,
                     init_b=init_b,
-                    g = gs1,
-                    expansion = False
+                    g=gs1,
+                    expansion=False
                 ) if y2 > 0 else nn.ReLU6(inplace=True),
                 ChannelShuffle(gs1[1]) if shuffle else nn.Sequential(),
-                ChannelShuffle2(hidden_dim2//2) if shuffle and y2 !=0 else nn.Sequential(),
+                ChannelShuffle2(hidden_dim2 // 2) if shuffle and y2 != 0 else nn.Sequential(),
                 get_pointwise_conv(pointwise, hidden_dim2, oup, hidden_fft, (g1, g2)),
                 activation.get_act_layer(
                     oup,
@@ -318,13 +333,13 @@ class DYMicroBlock(nn.Module):
                     act_relu=False,
                     act_bias=act_bias,
                     init_a=[init_ab3[0], 0.0],
-                    reduction=act_reduction//2,
+                    reduction=act_reduction // 2,
                     init_b=[init_ab3[1], 0.0],
-                    g = (g1, g2),
-                    expansion = False
+                    g=(g1, g2),
+                    expansion=False
                 ) if y3 > 0 else nn.Sequential(),
                 ChannelShuffle(g2) if shuffle else nn.Sequential(),
-                ChannelShuffle2(oup//2) if shuffle and oup%2 == 0  and y3!=0 else nn.Sequential(),
+                ChannelShuffle2(oup // 2) if shuffle and oup % 2 == 0 and y3 != 0 else nn.Sequential(),
             )
         elif g2 == 0:
             self.layers = nn.Sequential(
@@ -339,8 +354,8 @@ class DYMicroBlock(nn.Module):
                     init_a=[init_ab3[0], 0.0],
                     reduction=act_reduction,
                     init_b=[init_ab3[1], 0.0],
-                    g = gs1,
-                    expansion = False
+                    g=gs1,
+                    expansion=False
                 ) if y3 > 0 else nn.Sequential(),
 
             )
@@ -358,8 +373,8 @@ class DYMicroBlock(nn.Module):
                     init_a=init_a,
                     reduction=act_reduction,
                     init_b=init_b,
-                    g = gs1,
-                    expansion = False
+                    g=gs1,
+                    expansion=False
                 ) if y1 > 0 else nn.ReLU6(inplace=True),
                 ChannelShuffle(gs1[1]) if shuffle else nn.Sequential(),
                 DepthSpatialSepConv(hidden_dim2, (1, 1), kernel_size, stride) if depthsep else
@@ -375,11 +390,13 @@ class DYMicroBlock(nn.Module):
                     init_a=init_a,
                     reduction=act_reduction,
                     init_b=init_b,
-                    g = gs1,
-                    expansion = True
+                    g=gs1,
+                    expansion=True
                 ) if y2 > 0 else nn.ReLU6(inplace=True),
-                ChannelShuffle2(hidden_dim2//4) if shuffle and y1!=0 and y2 !=0 else nn.Sequential() if y1==0 and y2==0 else ChannelShuffle2(hidden_dim2//2),
-                get_pointwise_conv(pointwise, hidden_dim2, oup, hidden_fft, (g1, g2)), #FFTConv
+                ChannelShuffle2(
+                    hidden_dim2 // 4) if shuffle and y1 != 0 and y2 != 0 else nn.Sequential() if y1 == 0 and y2 == 0 else ChannelShuffle2(
+                    hidden_dim2 // 2),
+                get_pointwise_conv(pointwise, hidden_dim2, oup, hidden_fft, (g1, g2)),  # FFTConv
                 activation.get_act_layer(
                     oup,
                     oup,
@@ -388,13 +405,13 @@ class DYMicroBlock(nn.Module):
                     act_relu=False,
                     act_bias=act_bias,
                     init_a=[init_ab3[0], 0.0],
-                    reduction=act_reduction//2 if oup < hidden_dim2 else act_reduction,
+                    reduction=act_reduction // 2 if oup < hidden_dim2 else act_reduction,
                     init_b=[init_ab3[1], 0.0],
-                    g = (g1, g2),
-                    expansion = False
+                    g=(g1, g2),
+                    expansion=False
                 ) if y3 > 0 else nn.Sequential(),
                 ChannelShuffle(g2) if shuffle else nn.Sequential(),
-                ChannelShuffle2(oup//2) if shuffle and y3!=0 else nn.Sequential(),
+                ChannelShuffle2(oup // 2) if shuffle and y3 != 0 else nn.Sequential(),
             )
 
     def forward(self, x):
@@ -405,6 +422,39 @@ class DYMicroBlock(nn.Module):
             out = out + identity
 
         return out
+
+
+class SPPLayer(torch.nn.Module):
+
+    def __init__(self, num_levels, pool_type='max_pool'):
+        super(SPPLayer, self).__init__()
+
+        self.num_levels = num_levels
+        self.pool_type = pool_type
+
+    def forward(self, x):
+        global x_flatten
+        num, c, h, w = x.size()  # num:样本数量 c:通道数 h:高 w:宽
+        for i in range(self.num_levels):
+            level = i + 1
+            kernel_size = (math.ceil(h / level), math.ceil(w / level))
+            stride = (math.ceil(h / level), math.ceil(w / level))
+            pooling = (
+                math.floor((kernel_size[0] * level - h + 1) / 2), math.floor((kernel_size[1] * level - w + 1) / 2))
+
+            # 选择池化方式
+            if self.pool_type == 'max_pool':
+                tensor = F.max_pool2d(x, kernel_size=kernel_size, stride=stride, padding=pooling).view(num, -1)
+            else:
+                tensor = F.avg_pool2d(x, kernel_size=kernel_size, stride=stride, padding=pooling).view(num, -1)
+
+            # 展开、拼接
+            if i == 0:
+                x_flatten = tensor.view(num, -1)
+            else:
+                x_flatten = torch.cat((x_flatten, tensor.view(num, -1)), 1)
+        return x_flatten
+
 
 ###########################################################################
 
@@ -428,18 +478,18 @@ class MicroNet(nn.Module):
 
         act_max = cfg.MODEL.ACTIVATION.ACT_MAX
         act_bias = cfg.MODEL.ACTIVATION.LINEARSE_BIAS
-        activation_cfg= cfg.MODEL.ACTIVATION
+        activation_cfg = cfg.MODEL.ACTIVATION
 
         # building first layer
         assert input_size % 32 == 0
         input_channel = stem_ch
         layers = [StemLayer(
-                    input_channels, input_channel,
-                    stride=2, 
-                    dilation=stem_dilation, 
-                    mode=stem_mode,
-                    groups=stem_groups
-                )]
+            input_channels, input_channel,
+            stride=2,
+            dilation=stem_dilation,
+            mode=stem_mode,
+            groups=stem_groups
+        )]
 
         for idx, val in enumerate(self.cfgs):
             s, n, c, ks, c1, c2, g1, g2, c3, g3, g4, y1, y2, y3, r = val
@@ -452,60 +502,63 @@ class MicroNet(nn.Module):
 
             output_channel = c
             layers.append(block(input_channel, output_channel,
-                kernel_size=ks, 
-                stride=s, 
-                ch_exp=t1, 
-                ch_per_group=gs1, 
-                groups_1x1=gs2,
-                depthsep = depthsep,
-                shuffle = shuffle,
-                pointwise = pointwise,
-                activation_cfg=activation_cfg,
-            ))
+                                kernel_size=ks,
+                                stride=s,
+                                ch_exp=t1,
+                                ch_per_group=gs1,
+                                groups_1x1=gs2,
+                                depthsep=depthsep,
+                                shuffle=shuffle,
+                                pointwise=pointwise,
+                                activation_cfg=activation_cfg,
+                                ))
             input_channel = output_channel
             for i in range(1, n):
-                layers.append(block(input_channel, output_channel, 
-                    kernel_size=ks, 
-                    stride=1, 
-                    ch_exp=t1, 
-                    ch_per_group=gs1, 
-                    groups_1x1=gs2,
-                    depthsep = depthsep,
-                    shuffle = shuffle,
-                    pointwise = pointwise,
-                    activation_cfg=activation_cfg,
-                ))
+                layers.append(block(input_channel, output_channel,
+                                    kernel_size=ks,
+                                    stride=1,
+                                    ch_exp=t1,
+                                    ch_per_group=gs1,
+                                    groups_1x1=gs2,
+                                    depthsep=depthsep,
+                                    shuffle=shuffle,
+                                    pointwise=pointwise,
+                                    activation_cfg=activation_cfg,
+                                    ))
                 input_channel = output_channel
         self.features = nn.Sequential(*layers)
-
 
         self.avgpool = nn.Sequential(
             nn.ReLU6(inplace=True),
             nn.AdaptiveAvgPool2d((1, 1)),
             h_swish()
-        ) 
+        )
 
         # building last several layers
         output_channel = out_ch
-         
-        self.classifier = nn.Sequential(
-            SwishLinear(input_channel, output_channel),
-            nn.Dropout(dropout_rate),
-            SwishLinear(output_channel, num_classes)
-        )
+
         # self.classifier = nn.Sequential(
-        #     nn.Conv2d(input_channel, num_classes, 1),
-        #     nn.AdaptiveAvgPool2d(output_size=(1, 1)),
-        #     nn.Flatten()
+        #     SwishLinear(input_channel, output_channel),
+        #     nn.Dropout(dropout_rate),
+        #     SwishLinear(output_channel, num_classes)
         # )
+        self.spp = SPPLayer(1)
+        self.classifier = nn.Sequential(
+            nn.Conv2d(input_channel, num_classes, 1),
+            # nn.AdaptiveAvgPool2d(output_size=(1, 1)),
+            nn.Flatten()
+        )
         self._initialize_weights()
+
     @autocast()
     def forward(self, x):
         x = self.features(x)
         x = self.avgpool(x)
+        x = self.spp(x)
+        x = x.view(x.size(0), x.size(1), 1, 1)
         # print(x.shape)
         # exit()
-        x = x.view(x.size(0), -1)
+        # x = x.view(x.size(0), -1)
         x = self.classifier(x)
         return x
 
@@ -524,6 +577,7 @@ class MicroNet(nn.Module):
                 m.weight.data.normal_(0, 0.01)
                 if m.bias is not None:
                     m.bias.data.zero_()
+
 
 def micronet(**kwargs):
     """

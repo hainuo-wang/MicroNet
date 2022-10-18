@@ -6,7 +6,7 @@ from utils import cfg
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model_path = "weights/model-9.pth"
-model = MicroNet(cfg, input_channels=3, num_classes=6)
+model = MicroNet(cfg, input_channels=1, num_classes=7)
 model.load_state_dict(torch.load(model_path, map_location=device))
 # 导入模型，输入一张输入图片的尺寸
-stat(model, (3, 224, 224))
+stat(model, (1, 224, 224))
